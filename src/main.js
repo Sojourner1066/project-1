@@ -80,12 +80,12 @@ runButton.addEventListener('click', () => {
 
 
   if (isNaN(k) || k <= 0 || isNaN(hexSize) || hexSize <= 0) {
-    alert("K valuse must be greater than 0.");
+    alert("K values must be greater than 0.");
     return;
   }
 
   if (hexSize < 8 || hexSize > 80) {
-    alert("Hex bin size must be between 8 and 80 kilometers.");
+    alert("Hexbin size must be between 8 and 80 kilometers squared.");
     return;
   }
 
