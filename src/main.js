@@ -5,7 +5,7 @@ import { interpolateIDWHex, attachNitrateToTracts, runRegression, computeResidua
 const base = import.meta.env.BASE_URL;
 let residualLegend; // To track and remove old legend
 
-const map = L.map('map').setView([44.5, -89.5], 6);
+const map = L.map('map').setView([44.5, -89.5], 7);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
@@ -35,6 +35,7 @@ Promise.all([
       layer.bindPopup(`Cancer Rate: ${rate}`);
     }
   }).addTo(map);
+  enforceLayerOrder();
   overlays["Cancer Tracts"] = cancerLayer;
 
   // Show well points
@@ -55,10 +56,17 @@ Promise.all([
       layer.bindPopup(`Nitrate: ${nitrate}`);
     }
   }).addTo(map);
+  enforceLayerOrder();
   overlays["Well Nitrate Points"] = wellLayer;
 
-  addCancerLegend();
+  // addCancerLegend();
+  const nitrateLegend = addNitrateLegend();
+  const cancerLegend = addCancerLegend();
+  nitrateLegend.addTo(map);
+  cancerLegend.addTo(map);
   L.control.layers(null, overlays).addTo(map);
+  map.on('overlayadd', enforceLayerOrder);
+  map.on('overlayremove', enforceLayerOrder);
 });
 
 const kInput = document.getElementById('k-input');
@@ -102,9 +110,8 @@ runButton.addEventListener('click', () => {
       layer.bindPopup(`Residual Std Dev: ${sd}`);
     }
   }).addTo(map);
-
+  enforceLayerOrder();
   overlays["Residual Std Dev Hexes"] = hexLayer;
-
   addResidualLegend(hexStdDevs);
 });
 
@@ -143,9 +150,17 @@ function getStdDevColor(val) {
 
 function addCancerLegend() {
   const legend = L.control({ position: 'bottomright' });
+
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', 'info legend');
-    const grades = [0, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8];
+    const min = 0.0;
+    const max = 1.01;
+    const bins = 6;
+    const step = (max - min) / bins;
+    const grades = Array.from({ length: bins + 1 }, (_, i) =>
+      +(min + i * step).toFixed(3)
+    );
+
     div.innerHTML = '<strong>Cancer Rate</strong><br>';
     for (let i = grades.length - 1; i >= 0; i--) {
       const from = grades[i];
@@ -155,9 +170,40 @@ function addCancerLegend() {
         `<i style="background:${color}; width: 18px; height: 18px; display:inline-block; margin-right: 5px;"></i>` +
         `${from}${to ? '&ndash;' + to : '+'}<br>`;
     }
+
     return div;
   };
-  legend.addTo(map);
+
+  return legend;
+}
+
+function addNitrateLegend() {
+  const legend = L.control({ position: 'bottomright' });
+
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'info legend');
+    const min = 0.0;
+    const max = 17.068;
+    const bins = 6;
+    const step = (max - min) / bins;
+    const grades = Array.from({ length: bins + 1 }, (_, i) =>
+      +(min + i * step).toFixed(3)
+    );
+
+    div.innerHTML = '<strong>Nitrate (ppm)</strong><br>';
+    for (let i = grades.length - 1; i >= 0; i--) {
+      const from = grades[i];
+      const to = grades[i + 1];
+      const color = getNitrateColor(from);
+      div.innerHTML +=
+        `<i style="background:${color}; width: 18px; height: 18px; display:inline-block; margin-right: 5px;"></i>` +
+        `${from}${to ? '&ndash;' + to : '+'}<br>`;
+    }
+
+    return div;
+  };
+
+  return legend;
 }
 
 function addResidualLegend(hexStdDevs) {
@@ -193,4 +239,10 @@ function addResidualLegend(hexStdDevs) {
   };
 
   residualLegend.addTo(map);
+}
+
+function enforceLayerOrder() {
+  if (cancerLayer) cancerLayer.bringToBack();
+  if (wellLayer) wellLayer.bringToFront();
+  if (hexLayer) hexLayer.bringToFront();
 }
