@@ -1,176 +1,196 @@
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { interpolateIDWHex, attachNitrateToTracts, runRegression } from './analysis.js';
+import { interpolateIDWHex, attachNitrateToTracts, runRegression, computeResiduals, hexbinResidualStdDev } from './analysis.js';
 
-const kInput = document.getElementById('k-input');
 const base = import.meta.env.BASE_URL;
-let colorBy = 'canrate'; // default selection
+let residualLegend; // To track and remove old legend
 
-// const map = L.map('map').setView([43.0, -89.4], 8);
-const map = L.map('map').setView([44.5, -89.5], 7);
-
+const map = L.map('map').setView([44.5, -89.5], 6);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; OpenStreetMap contributors',
+  attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-// DOM references for the slider
-const slider = document.getElementById('k-slider');
-const kDisplay = document.getElementById('k-value');
-
-let wellsData, cancerData, currentLayer;
+let cancerDataRaw, wellDataRaw;
+let cancerLayer, wellLayer, hexLayer;
+const overlays = {};
 
 Promise.all([
-  fetch(`${base}data/well_nitrate.geojson`).then(res => res.json()),
-  fetch(`${base}data/cancer_tracts.geojson`).then(res => res.json())
-]).then(([wells, cancer]) => {
-  wellsData = wells;
-  cancerData = cancer;
-  updateMap(parseFloat(slider.value)); // Initial run
+  fetch(`${base}data/cancer_tracts.geojson`).then(res => res.json()),
+  fetch(`${base}data/well_nitrate.geojson`).then(res => res.json())
+]).then(([cancerData, wellData]) => {
+  cancerDataRaw = cancerData;
+  wellDataRaw = wellData;
+
+  // Show cancer tracts
+  cancerLayer = L.geoJSON(cancerDataRaw, {
+    style: feature => ({
+      fillColor: getCancerColor(feature.properties.canrate),
+      weight: 1,
+      opacity: 1,
+      color: 'white',
+      fillOpacity: 0.7
+    }),
+    onEachFeature: (feature, layer) => {
+      const rate = feature.properties.canrate?.toFixed(3);
+      layer.bindPopup(`Cancer Rate: ${rate}`);
+    }
+  }).addTo(map);
+  overlays["Cancer Tracts"] = cancerLayer;
+
+  // Show well points
+  wellLayer = L.geoJSON(wellDataRaw, {
+    pointToLayer: (feature, latlng) => {
+      const value = feature.properties.nitr_ran;
+      return L.circleMarker(latlng, {
+        radius: 5,
+        fillColor: getNitrateColor(value),
+        color: '#000',
+        weight: 1,
+        opacity: 1,
+        fillOpacity: 0.8
+      });
+    },
+    onEachFeature: (feature, layer) => {
+      const nitrate = feature.properties.nitr_ran?.toFixed(2);
+      layer.bindPopup(`Nitrate: ${nitrate}`);
+    }
+  }).addTo(map);
+  overlays["Well Nitrate Points"] = wellLayer;
+
+  addCancerLegend();
+  L.control.layers(null, overlays).addTo(map);
 });
 
-function updateMap(k) {
-  // Remove old layer and regression stats
-  if (currentLayer) {
-    map.removeLayer(currentLayer);
+const kInput = document.getElementById('k-input');
+const hexInput = document.getElementById('hex-size');
+const runButton = document.getElementById('run-analysis');
+
+runButton.addEventListener('click', () => {
+  const k = parseFloat(kInput.value);
+  const hexSize = parseFloat(hexInput.value);
+
+
+
+  if (isNaN(k) || k <= 0 || isNaN(hexSize) || hexSize <= 0) {
+    alert("K valuse must be greater than 0.");
+    return;
   }
-  document.querySelector('#regression-stats')?.remove();
 
-  // Interpolate nitrate using current k
-  const idwGrid = interpolateIDWHex(wellsData, 10, k);
-  const enrichedTracts = attachNitrateToTracts(structuredClone(cancerData), idwGrid);
-  const regressionResult = runRegression(enrichedTracts);
+  if (hexSize < 8 || hexSize > 80) {
+    alert("Hex bin size must be between 8 and 80 kilometers.");
+    return;
+  }
 
-  // Add updated tracts to map
-  currentLayer = L.geoJSON(enrichedTracts, {
+
+  if (hexLayer) map.removeLayer(hexLayer);
+
+  const idwHexes = interpolateIDWHex(wellDataRaw, hexSize, k);
+  const enrichedTracts = attachNitrateToTracts(structuredClone(cancerDataRaw), idwHexes);
+  const regression = runRegression(enrichedTracts);
+  const withResiduals = computeResiduals(enrichedTracts, regression);
+  const hexStdDevs = hexbinResidualStdDev(withResiduals, hexSize);
+
+  hexLayer = L.geoJSON(hexStdDevs, {
     style: feature => ({
-      fillColor: getColor(feature.properties[colorBy]),
-      color: '#fff',
+      fillColor: getStdDevColor(feature.properties.std_dev),
+      color: '#333',
       weight: 1,
       fillOpacity: 0.6
     }),
-    // style: feature => ({
-    //   fillColor: '#cc0000',
-    //   color: '#fff',
-    //   weight: 1,
-    //   fillOpacity: 0.4
-    // }),
     onEachFeature: (feature, layer) => {
-      const rate = feature.properties.canrate?.toFixed(2);
-      const nitrate = feature.properties.avg_nitrate?.toFixed(2);
-      layer.bindPopup(`Cancer Rate: ${rate}<br>Avg Nitrate: ${nitrate}`);
+      const sd = feature.properties.std_dev?.toFixed(3);
+      layer.bindPopup(`Residual Std Dev: ${sd}`);
     }
   }).addTo(map);
 
-  // Show regression info
-  const statsPanel = document.createElement('div');
-  statsPanel.id = 'regression-stats';
-  statsPanel.style = 'position: absolute; top: 60px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc; z-index: 1000;';
-  statsPanel.innerHTML = `
-    <strong>k = ${k.toFixed(1)}</strong><br>
-    <strong>Regression:</strong><br>
-    ${regressionResult.string}<br>
-    <strong>R²:</strong> ${regressionResult.r2.toFixed(3)}
-  `;
-  document.body.appendChild(statsPanel);
-}
+  overlays["Residual Std Dev Hexes"] = hexLayer;
 
-// Update label live as user drags
-slider.addEventListener('input', () => {
-  const k = parseFloat(slider.value);
-  kDisplay.textContent = k.toFixed(1);
+  addResidualLegend(hexStdDevs);
 });
 
-// Only update the map after user releases the slider
-slider.addEventListener('change', () => {
-  const k = parseFloat(slider.value);
-  updateMap(k);
-});
-
-
-// Only update on Enter key
-kInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    let k = parseFloat(kInput.value);
-    if (isNaN(k) || k <= 0) {
-      alert("Please enter a number greater than 0.");
-      kInput.value = slider.value;
-      return;
-    }
-
-    // Sync slider and display
-    slider.value = k;
-    kDisplay.textContent = k.toFixed(1);
-    updateMap(k);
-  }
-});
-
-// Update colorBy based on radio button selection
-document.querySelectorAll('input[name="colorBy"]').forEach(radio => {
-  radio.addEventListener('change', () => {
-    colorBy = document.querySelector('input[name="colorBy"]:checked').value;
-    updateMap(parseFloat(slider.value));
-
-    const legendBox = document.getElementById('legend-box');
-    if (legendBox) {
-      updateLegendContent(legendBox, colorBy);
-    }
-  });
-});
-
-function getColor(val) {
+function getCancerColor(val) {
   if (val == null) return '#ccc';
-
-  if (colorBy === 'canrate') {
-    return val > 0.8 ? '#800026' :
-           val > 0.6 ? '#BD0026' :
-           val > 0.4 ? '#E31A1C' :
-           val > 0.2 ? '#FC4E2A' :
-           val > 0.1 ? '#FD8D3C' :
-           val > 0.05 ? '#FEB24C' :
-                        '#FFEDA0';
-  } else if (colorBy === 'avg_nitrate') {
-    return val > 10 ? '#800026' :
-           val > 8  ? '#BD0026' :
-           val > 6  ? '#E31A1C' :
-           val > 4  ? '#FC4E2A' :
-           val > 2  ? '#FD8D3C' :
-           val > 0  ? '#FEB24C' :
-                      '#FFEDA0';
-  }
-
-  return '#ccc'; // fallback if unexpected field
+  return val > 0.8 ? '#800026' :
+         val > 0.6 ? '#BD0026' :
+         val > 0.4 ? '#E31A1C' :
+         val > 0.2 ? '#FC4E2A' :
+         val > 0.1 ? '#FD8D3C' :
+         val > 0.05 ? '#FEB24C' :
+                     '#FFEDA0';
 }
 
-const legend = L.control({ position: 'bottomright' });
+function getNitrateColor(val) {
+  if (val == null) return '#ccc';
+  return val > 10 ? '#084594' :
+         val > 8  ? '#2171b5' :
+         val > 6  ? '#4292c6' :
+         val > 4  ? '#6baed6' :
+         val > 2  ? '#9ecae1' :
+         val > 0  ? '#c6dbef' :
+                    '#eff3ff';
+}
 
-legend.onAdd = function () {
-  const div = L.DomUtil.create('div', 'info legend');
-  div.id = 'legend-box';
-  updateLegendContent(div, colorBy);
-  return div;
-};
+function getStdDevColor(val) {
+  if (val == null) return '#ccc';
+  return val > 0.5 ? '#67000d' :
+         val > 0.4 ? '#a50f15' :
+         val > 0.3 ? '#cb181d' :
+         val > 0.2 ? '#ef3b2c' :
+         val > 0.1 ? '#fb6a4a' :
+         val > 0.05 ? '#fcae91' :
+                     '#fee5d9';
+}
 
-legend.addTo(map);
+function addCancerLegend() {
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'info legend');
+    const grades = [0, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8];
+    div.innerHTML = '<strong>Cancer Rate</strong><br>';
+    for (let i = grades.length - 1; i >= 0; i--) {
+      const from = grades[i];
+      const to = grades[i + 1];
+      const color = getCancerColor(from);
+      div.innerHTML +=
+        `<i style="background:${color}; width: 18px; height: 18px; display:inline-block; margin-right: 5px;"></i>` +
+        `${from}${to ? '&ndash;' + to : '+'}<br>`;
+    }
+    return div;
+  };
+  legend.addTo(map);
+}
 
-function updateLegendContent(div, variable) {
-  let grades, label;
-
-  if (variable === 'canrate') {
-    grades = [0, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8];
-    label = 'Cancer Rate';
-  } else {
-    grades = [0, 2, 4, 6, 8, 10];
-    label = 'Avg Nitrate';
+function addResidualLegend(hexStdDevs) {
+  if (residualLegend) {
+    map.removeControl(residualLegend);
   }
 
-  div.innerHTML = `<strong>${label}</strong><br>`;
-  for (let i = grades.length - 1; i >= 0; i--) {
-    const from = grades[i];
-    const to = grades[i + 1];
-    const color = getColor(from);
+  const values = hexStdDevs.features
+    .map(f => f.properties.std_dev)
+    .filter(v => v != null && !isNaN(v));
 
-    div.innerHTML +=
-      `<i style="background:${color}; width: 18px; height: 18px; display:inline-block; margin-right: 5px;"></i> ` +
-      `${from}${to ? '&ndash;' + to : '+'}<br>`;
-  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+
+  const binCount = 6;
+  const step = (max - min) / binCount;
+  const grades = Array.from({ length: binCount + 1 }, (_, i) => +(min + i * step).toFixed(3));
+
+  residualLegend = L.control({ position: 'bottomleft' });
+
+  residualLegend.onAdd = function () {
+    const div = L.DomUtil.create('div', 'info legend');
+    div.innerHTML = '<strong>Residual Std Dev</strong><br>';
+    for (let i = 0; i < grades.length - 1; i++) {
+      const from = grades[i];
+      const to = grades[i + 1];
+      const color = getStdDevColor(from); // This may need adjusting
+      div.innerHTML +=
+        `<i style="background:${color}; width: 18px; height: 18px; display:inline-block; margin-right: 5px;"></i>` +
+        `${from} &ndash; ${to}<br>`;
+    }
+    return div;
+  };
+
+  residualLegend.addTo(map);
 }

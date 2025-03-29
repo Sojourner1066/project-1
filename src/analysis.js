@@ -2,8 +2,8 @@ import * as turf from '@turf/turf';
 import regression from 'regression';
 
 // IDW Interpolation using hex bins
-export function interpolateIDWHex(wellData, cellSize = 2, k = 2) {
-  const bbox = turf.bbox(wellData); // [minX, minY, maxX, maxY]
+export function interpolateIDWHex(wellData, cellSize = 10, k = 2) {
+  const bbox = turf.bbox(wellData);
   const hexGrid = turf.hexGrid(bbox, cellSize, { units: 'kilometers' });
 
   hexGrid.features.forEach(hex => {
@@ -50,18 +50,63 @@ export function attachNitrateToTracts(cancerTracts, idwHexes) {
   return cancerTracts;
 }
 
-// Run linear regression on avg_nitrate vs. canrate
+// Run linear regression
 export function runRegression(cancerTracts) {
   const data = cancerTracts.features
     .map(f => [f.properties.avg_nitrate, f.properties.canrate])
     .filter(([x, y]) => !isNaN(x) && !isNaN(y));
 
   const result = regression.linear(data);
-
   return {
     points: data,
-    equation: result.equation,    // [slope, intercept]
-    string: result.string,        // e.g. "y = 1.23x + 4.56"
-    r2: result.r2                 // Coefficient of determination
+    equation: result.equation,
+    string: result.string,
+    r2: result.r2
   };
+}
+
+// Add residuals to each tract
+export function computeResiduals(cancerTracts, regressionResult) {
+  const [slope, intercept] = regressionResult.equation;
+  cancerTracts.features.forEach(f => {
+    const x = f.properties.avg_nitrate;
+    const y = f.properties.canrate;
+    if (!isNaN(x) && !isNaN(y)) {
+      const predicted = slope * x + intercept;
+      f.properties.residual = y - predicted;
+    } else {
+      f.properties.residual = null;
+    }
+  });
+  return cancerTracts;
+}
+
+// Calculate standard deviation of residuals per hex bin
+export function hexbinResidualStdDev(cancerTracts, cellSize = 10) {
+  const centroids = cancerTracts.features.map(f => {
+    const center = turf.centroid(f);
+    center.properties = {
+      residual: f.properties.residual
+    };
+    return center;
+  });
+
+  const collection = turf.featureCollection(centroids);
+  const bbox = turf.bbox(collection);
+  const hexGrid = turf.hexGrid(bbox, cellSize, { units: 'kilometers' });
+
+  hexGrid.features.forEach(hex => {
+    const points = centroids.filter(pt => turf.booleanPointInPolygon(pt, hex));
+    const values = points.map(p => p.properties.residual).filter(v => !isNaN(v));
+
+    if (values.length > 1) {
+      const mean = values.reduce((a, b) => a + b, 0) / values.length;
+      const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (values.length - 1);
+      hex.properties.std_dev = Math.sqrt(variance);
+    } else {
+      hex.properties.std_dev = null;
+    }
+  });
+
+  return hexGrid;
 }
