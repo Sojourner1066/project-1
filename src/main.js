@@ -3,37 +3,56 @@ import 'leaflet/dist/leaflet.css';
 import { interpolateIDWHex, attachNitrateToTracts, runRegression } from './analysis.js';
 
 const base = import.meta.env.BASE_URL;
+let colorBy = 'canrate'; // default selection
 
-const map = L.map('map').setView([43.0, -89.4], 8); // Center on WI
+// const map = L.map('map').setView([43.0, -89.4], 8);
+const map = L.map('map').setView([44.5, -89.5], 7);
 
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors',
 }).addTo(map);
 
-let idwGrid, cancerData;
+// DOM references for the slider
+const slider = document.getElementById('k-slider');
+const kDisplay = document.getElementById('k-value');
+
+let wellsData, cancerData, currentLayer;
 
 Promise.all([
   fetch(`${base}data/well_nitrate.geojson`).then(res => res.json()),
   fetch(`${base}data/cancer_tracts.geojson`).then(res => res.json())
 ]).then(([wells, cancer]) => {
-  // Perform IDW
-  idwGrid = interpolateIDWHex(wells, 2, 2);
+  wellsData = wells;
+  cancerData = cancer;
+  updateMap(parseFloat(slider.value)); // Initial run
+});
 
-  // Attach nitrate values to cancer tracts
-  cancerData = attachNitrateToTracts(cancer, idwGrid);
+function updateMap(k) {
+  // Remove old layer and regression stats
+  if (currentLayer) {
+    map.removeLayer(currentLayer);
+  }
+  document.querySelector('#regression-stats')?.remove();
 
-  // Run regression
-  const regressionResult = runRegression(cancerData);
-  console.log('Regression:', regressionResult);
+  // Interpolate nitrate using current k
+  const idwGrid = interpolateIDWHex(wellsData, 10, k);
+  const enrichedTracts = attachNitrateToTracts(structuredClone(cancerData), idwGrid);
+  const regressionResult = runRegression(enrichedTracts);
 
-  // Visualize tracts with popups
-  L.geoJSON(cancerData, {
+  // Add updated tracts to map
+  currentLayer = L.geoJSON(enrichedTracts, {
     style: feature => ({
-      fillColor: '#cc0000',
+      fillColor: getColor(feature.properties[colorBy]),
       color: '#fff',
       weight: 1,
-      fillOpacity: 0.4
+      fillOpacity: 0.6
     }),
+    // style: feature => ({
+    //   fillColor: '#cc0000',
+    //   color: '#fff',
+    //   weight: 1,
+    //   fillOpacity: 0.4
+    // }),
     onEachFeature: (feature, layer) => {
       const rate = feature.properties.canrate?.toFixed(2);
       const nitrate = feature.properties.avg_nitrate?.toFixed(2);
@@ -41,106 +60,59 @@ Promise.all([
     }
   }).addTo(map);
 
-  // Display regression result in a floating div
+  // Show regression info
   const statsPanel = document.createElement('div');
-  statsPanel.style = 'position: absolute; top: 10px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc; z-index: 1000;';
+  statsPanel.id = 'regression-stats';
+  statsPanel.style = 'position: absolute; top: 60px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc; z-index: 1000;';
   statsPanel.innerHTML = `
-    <strong>Regression Equation:</strong><br>
+    <strong>k = ${k.toFixed(1)}</strong><br>
+    <strong>Regression:</strong><br>
     ${regressionResult.string}<br>
     <strong>R²:</strong> ${regressionResult.r2.toFixed(3)}
   `;
   document.body.appendChild(statsPanel);
+}
+
+// Update label live as user drags
+slider.addEventListener('input', () => {
+  const k = parseFloat(slider.value);
+  kDisplay.textContent = k.toFixed(1);
 });
 
-// Optional color scale helper
+// Only update the map after user releases the slider
+slider.addEventListener('change', () => {
+  const k = parseFloat(slider.value);
+  updateMap(k);
+});
+
+// Update colorBy based on radio button selection
+document.querySelectorAll('input[name="colorBy"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    colorBy = document.querySelector('input[name="colorBy"]:checked').value;
+    updateMap(parseFloat(slider.value));
+  });
+});
+
 function getColor(val) {
-  return val > 10 ? '#800026' :
-         val > 8  ? '#BD0026' :
-         val > 6  ? '#E31A1C' :
-         val > 4  ? '#FC4E2A' :
-         val > 2  ? '#FD8D3C' :
-         val > 0  ? '#FEB24C' :
-                    '#FFEDA0';
+  if (val == null) return '#ccc';
+
+  if (colorBy === 'canrate') {
+    return val > 0.8 ? '#800026' :
+           val > 0.6 ? '#BD0026' :
+           val > 0.4 ? '#E31A1C' :
+           val > 0.2 ? '#FC4E2A' :
+           val > 0.1 ? '#FD8D3C' :
+           val > 0.05 ? '#FEB24C' :
+                        '#FFEDA0';
+  } else if (colorBy === 'avg_nitrate') {
+    return val > 10 ? '#800026' :
+           val > 8  ? '#BD0026' :
+           val > 6  ? '#E31A1C' :
+           val > 4  ? '#FC4E2A' :
+           val > 2  ? '#FD8D3C' :
+           val > 0  ? '#FEB24C' :
+                      '#FFEDA0';
+  }
+
+  return '#ccc'; // fallback if unexpected field
 }
-// import L from 'leaflet';
-// import 'leaflet/dist/leaflet.css';
-// import { interpolateIDWHex, attachNitrateToTracts } from './analysis.js';
-// import { runRegression } from './analysis.js';
-
-// const base = import.meta.env.BASE_URL;
-
-// // import markerIcon from 'leaflet/dist/images/marker-icon.png';
-// // import markerShadow from 'leaflet/dist/images/marker-shadow.png';
-
-// // delete L.Icon.Default.prototype._getIconUrl;
-
-// // L.Icon.Default.mergeOptions({
-// //   iconUrl: markerIcon,
-// //   shadowUrl: markerShadow,
-// // });
-
-// const map = L.map('map').setView([43.0, -89.4], 8); // center on WI
-
-// L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-//   attribution: '&copy; OpenStreetMap contributors',
-// }).addTo(map);
-
-
-
-// let idwGrid, cancerData;
-
-// Promise.all([
-//   fetch(`${base}data/well_nitrate.geojson`).then(res => res.json()),
-//   fetch(`${base}data/cancer_tracts.geojson`).then(res => res.json())
-// ]).then(([wells, cancer]) => {
-//   // Perform IDW
-//   idwGrid = interpolateIDWHex(wells, 2, 2);
-
-//   // Attach nitrate values to cancer tracts
-//   // cancerData = attachNitrateToTracts(cancer, idwGrid);
-  
-
-//   // Visualize tracts with popups
-//   L.geoJSON(cancerData, {
-//     style: feature => ({
-//       fillColor: '#cc0000',
-//       color: '#fff',
-//       weight: 1,
-//       fillOpacity: 0.4
-//     }),
-//     onEachFeature: (feature, layer) => {
-//       const rate = feature.properties.canrate?.toFixed(2);
-//       const nitrate = feature.properties.avg_nitrate?.toFixed(2);
-//       layer.bindPopup(`Cancer Rate: ${rate}<br>Avg Nitrate: ${nitrate}`);
-//     }
-//   }).addTo(map);
-// });
-
-
-// function getColor(val) {
-//   return val > 10 ? '#800026' :
-//          val > 8  ? '#BD0026' :
-//          val > 6  ? '#E31A1C' :
-//          val > 4  ? '#FC4E2A' :
-//          val > 2  ? '#FD8D3C' :
-//          val > 0  ? '#FEB24C' :
-//                     '#FFEDA0';
-// }
-
-
-// // After attaching nitrate to tracts:
-// const enrichedTracts = attachNitrateToTracts(cancerData, idwGrid);
-
-// // Run regression
-// const regressionResult = runRegression(enrichedTracts);
-// console.log("Regression:", regressionResult);
-
-// // Optional: display it on screen
-// const statsPanel = document.createElement('div');
-// statsPanel.style = 'position: absolute; top: 10px; right: 10px; background: white; padding: 10px; border: 1px solid #ccc;';
-// statsPanel.innerHTML = `
-//   <strong>Regression Equation:</strong><br>
-//   ${regressionResult.string}<br>
-//   <strong>R²:</strong> ${regressionResult.r2.toFixed(3)}
-// `;
-// document.body.appendChild(statsPanel);

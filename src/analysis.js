@@ -1,5 +1,7 @@
 import * as turf from '@turf/turf';
+import regression from 'regression';
 
+// IDW Interpolation using hex bins
 export function interpolateIDWHex(wellData, cellSize = 2, k = 2) {
   const bbox = turf.bbox(wellData); // [minX, minY, maxX, maxY]
   const hexGrid = turf.hexGrid(bbox, cellSize, { units: 'kilometers' });
@@ -14,7 +16,6 @@ export function interpolateIDWHex(wellData, cellSize = 2, k = 2) {
       const nitrate = well.properties.nitr_ran;
 
       if (d === 0) {
-        // If the centroid falls right on a well, use that value directly
         hex.properties.nitrate = nitrate;
         return;
       }
@@ -30,25 +31,26 @@ export function interpolateIDWHex(wellData, cellSize = 2, k = 2) {
   return hexGrid;
 }
 
-
+// Aggregate IDW nitrate values into census tracts
 export function attachNitrateToTracts(cancerTracts, idwHexes) {
-    cancerTracts.features.forEach(tract => {
-      const hexesInTract = idwHexes.features.filter(hex => {
-        const centroid = turf.centroid(hex);
-        return turf.booleanPointInPolygon(centroid, tract);
-      });
-  
-      const values = hexesInTract.map(hex => hex.properties.nitrate).filter(v => !isNaN(v));
-      const avgNitrate = values.reduce((a, b) => a + b, 0) / values.length;
-  
-      tract.properties.avg_nitrate = avgNitrate || 0;
+  cancerTracts.features.forEach(tract => {
+    const hexesInTract = idwHexes.features.filter(hex => {
+      const centroid = turf.centroid(hex);
+      return turf.booleanPointInPolygon(centroid, tract);
     });
-  
-    return cancerTracts;
-  }
 
-  import regression from 'regression';
+    const values = hexesInTract.map(hex => hex.properties.nitrate).filter(v => !isNaN(v));
+    const avgNitrate = values.length > 0
+      ? values.reduce((a, b) => a + b, 0) / values.length
+      : null;
 
+    tract.properties.avg_nitrate = avgNitrate;
+  });
+
+  return cancerTracts;
+}
+
+// Run linear regression on avg_nitrate vs. canrate
 export function runRegression(cancerTracts) {
   const data = cancerTracts.features
     .map(f => [f.properties.avg_nitrate, f.properties.canrate])
@@ -60,6 +62,6 @@ export function runRegression(cancerTracts) {
     points: data,
     equation: result.equation,    // [slope, intercept]
     string: result.string,        // e.g. "y = 1.23x + 4.56"
-    r2: result.r2                 // R² value
+    r2: result.r2                 // Coefficient of determination
   };
 }
