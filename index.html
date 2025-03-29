@@ -4,8 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite App</title>
-
+    <title>Nitrate & Cancer Analysis</title>
     <style>
       .info.legend {
         background: white;
@@ -17,33 +16,26 @@
         color: #000;
       }
     </style>
-    <script type="module" crossorigin src="/project-1/assets/index-DMXcYAEL.js"></script>
+    <script type="module" crossorigin src="/project-1/assets/index-9I6EdT3z.js"></script>
     <link rel="stylesheet" crossorigin href="/project-1/assets/index-CIGW-MKW.css">
   </head>
   <body>
     <label style="position: absolute; top: 10px; left: 70px; background: white; padding: 10px; z-index: 1000;">
-      <strong>Distance Decay (k):</strong>
-      <input type="range" id="k-slider" min="1.1" max="5" step="0.1" value="2">
-      <span id="k-value">2.0</span>
-      <br>
+      
+      
       <label>
-        or enter value:
+        <strong>Please enter a Distance Decay (k) value:</strong>
         <input type="number" id="k-input" min="0.1" step="0.1" value="2" style="width: 60px;">
       </label>
     </label>
-    <div style="position: absolute; top: 70px; left: 70px; background: white; padding: 10px; z-index: 1000;">
-      <strong>Color by:</strong><br>
-      <label>
-        <input type="radio" name="colorBy" value="canrate" checked>
-        Cancer Rate
-      </label><br>
-      <label>
-        <input type="radio" name="colorBy" value="avg_nitrate">
-        Avg Nitrate
-      </label>
-   
-          </div>
+
+    <div style="position: absolute; top: 40px; left: 70px; background: white; padding: 10px; z-index: 1000;">
+      <strong>Hex Bin Size (km²):</strong><br>
+      <input type="number" id="hex-size" min="1" step="1" value="10" style="width: 60px;">
+      <button id="run-analysis">Run Analysis</button>
+    </div>
 
     <div id="map" style="height: 100vh;"></div>
   </body>
 </html>
+
