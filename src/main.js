@@ -90,6 +90,11 @@ document.querySelectorAll('input[name="colorBy"]').forEach(radio => {
   radio.addEventListener('change', () => {
     colorBy = document.querySelector('input[name="colorBy"]:checked').value;
     updateMap(parseFloat(slider.value));
+
+    const legendBox = document.getElementById('legend-box');
+    if (legendBox) {
+      updateLegendContent(legendBox, colorBy);
+    }
   });
 });
 
@@ -115,4 +120,38 @@ function getColor(val) {
   }
 
   return '#ccc'; // fallback if unexpected field
+}
+
+const legend = L.control({ position: 'bottomright' });
+
+legend.onAdd = function () {
+  const div = L.DomUtil.create('div', 'info legend');
+  div.id = 'legend-box';
+  updateLegendContent(div, colorBy);
+  return div;
+};
+
+legend.addTo(map);
+
+function updateLegendContent(div, variable) {
+  let grades, label;
+
+  if (variable === 'canrate') {
+    grades = [0, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8];
+    label = 'Cancer Rate';
+  } else {
+    grades = [0, 2, 4, 6, 8, 10];
+    label = 'Avg Nitrate';
+  }
+
+  div.innerHTML = `<strong>${label}</strong><br>`;
+  for (let i = grades.length - 1; i >= 0; i--) {
+    const from = grades[i];
+    const to = grades[i + 1];
+    const color = getColor(from);
+
+    div.innerHTML +=
+      `<i style="background:${color}; width: 18px; height: 18px; display:inline-block; margin-right: 5px;"></i> ` +
+      `${from}${to ? '&ndash;' + to : '+'}<br>`;
+  }
 }
